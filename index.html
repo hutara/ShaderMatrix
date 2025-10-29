@@ -7,7 +7,423 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-ocean.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./assets/main.css">
+    
+    <style>
+        /* ========== RESET & BASE ========== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto Mono', monospace;
+            background: #000;
+            color: #0ff;
+            overflow: hidden;
+            position: relative;
+            height: 100vh;
+            touch-action: none;
+        }
+
+        /* ========== SHADER CANVAS ========== */
+        #shader-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        /* ========== APP CONTAINER ========== */
+        .app-container {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            pointer-events: none;
+        }
+
+        .app-container > * {
+            pointer-events: auto;
+        }
+
+        /* ========== HEADER ========== */
+        .header {
+            background: rgba(0, 10, 20, 0.95);
+            border-bottom: 2px solid #0ff;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .logo {
+            font-family: 'Orbitron', monospace;
+            font-size: clamp(1rem, 3vw, 1.5rem);
+            font-weight: 900;
+            text-shadow: 0 0 20px #0ff;
+            letter-spacing: 2px;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        /* ========== BUTTONS ========== */
+        .btn {
+            background: linear-gradient(135deg, #001a33, #003366);
+            border: 1px solid #0ff;
+            color: #0ff;
+            padding: 8px 16px;
+            font-size: clamp(0.7rem, 2vw, 0.9rem);
+            font-family: 'Roboto Mono', monospace;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-decoration: none;
+            display: inline-block;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            background: linear-gradient(135deg, #003366, #0066cc);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #1a0033, #330066);
+            border-color: #f0f;
+            color: #f0f;
+        }
+
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #330066, #6600cc);
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.5);
+        }
+
+        /* ========== TOGGLE BUTTONS ========== */
+        .toggle-btn {
+            position: fixed;
+            z-index: 1000;
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 20, 40, 0.9);
+            border: 2px solid #0ff;
+            color: #0ff;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .toggle-btn:hover {
+            background: rgba(0, 40, 80, 0.9);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+
+        #sidebarToggle {
+            top: 70px;
+            left: 10px;
+        }
+
+        #editorToggle {
+            top: 70px;
+            right: 10px;
+        }
+
+        /* ========== SIDEBAR ========== */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 60px;
+            width: 250px;
+            height: calc(100vh - 60px);
+            background: rgba(0, 10, 20, 0.95);
+            border-right: 2px solid #0ff;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .sidebar.collapsed {
+            transform: translateX(-100%);
+        }
+
+        .sidebar-section {
+            padding: 15px;
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+        }
+
+        .sidebar-title {
+            font-size: 0.8rem;
+            color: #f0f;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .preset-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(0, 40, 80, 0.3);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.85rem;
+        }
+
+        .preset-item:hover {
+            background: rgba(0, 80, 160, 0.5);
+            border-color: #0ff;
+            transform: translateX(5px);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+        }
+
+        /* ========== EDITOR PANEL ========== */
+        .editor-panel {
+            position: fixed;
+            right: 0;
+            top: 60px;
+            width: 45%;
+            height: calc(100vh - 60px);
+            background: rgba(0, 10, 20, 0.95);
+            border-left: 2px solid #0ff;
+            transition: transform 0.3s ease;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(10px);
+            transform: translateX(100%); /* پیش‌فرض بسته */
+        }
+
+        .editor-panel.collapsed {
+            transform: translateX(100%);
+        }
+
+        /* حالت باز */
+        .editor-panel:not(.collapsed) {
+            transform: translateX(0);
+        }
+
+        .panel-header {
+            padding: 10px 15px;
+            background: rgba(0, 20, 40, 0.8);
+            border-bottom: 1px solid #0ff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+
+        #statusText {
+            color: #f0f;
+            font-size: 0.8rem;
+        }
+
+        .editor-container {
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ========== INFO PANEL ========== */
+        .info-panel {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            background: rgba(0, 10, 20, 0.9);
+            padding: 10px 20px;
+            border: 1px solid #0ff;
+            border-radius: 5px;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: clamp(0.7rem, 2vw, 0.9rem);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #0ff;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .info-label {
+            color: #888;
+            font-size: 0.8em;
+        }
+
+        .info-value {
+            color: #0ff;
+            font-weight: 500;
+        }
+
+        /* ========== FULLSCREEN MODE ========== */
+        .fullscreen-exit-hint {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 20, 40, 0.95);
+            padding: 20px 40px;
+            border: 2px solid #0ff;
+            font-size: 1.2rem;
+            z-index: 10000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        body.fullscreen-mode .fullscreen-exit-hint {
+            opacity: 1;
+            animation: fadeOut 3s forwards;
+        }
+
+        @keyframes fadeOut {
+            0%, 70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        body.fullscreen-mode .header,
+        body.fullscreen-mode .sidebar,
+        body.fullscreen-mode .editor-panel,
+        body.fullscreen-mode .info-panel,
+        body.fullscreen-mode .toggle-btn {
+            display: none;
+        }
+
+        /* ========== MOBILE RESPONSIVE ========== */
+        @media (max-width: 768px) {
+            .header {
+                padding: 8px 10px;
+            }
+
+            .logo {
+                font-size: 1rem;
+                letter-spacing: 1px;
+            }
+
+            .header-controls {
+                width: 100%;
+                justify-content: center;
+                gap: 5px;
+            }
+
+            .btn {
+                padding: 6px 10px;
+                font-size: 0.7rem;
+            }
+
+            .sidebar {
+                width: 80%;
+                max-width: 300px;
+            }
+
+            .editor-panel {
+                width: 90%;
+                max-width: 400px;
+            }
+
+            #sidebarToggle {
+                top: auto;
+                bottom: 70px;
+                left: 10px;
+            }
+
+            #editorToggle {
+                top: auto;
+                bottom: 70px;
+                right: 10px;
+            }
+
+            .info-panel {
+                bottom: 10px;
+                padding: 8px 15px;
+                gap: 15px;
+            }
+
+            .info-item {
+                font-size: 0.75rem;
+            }
+
+            /* دکمه‌های کوچکتر در موبایل */
+            .toggle-btn {
+                width: 35px;
+                height: 35px;
+                font-size: 16px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header-controls {
+                gap: 3px;
+            }
+
+            .btn {
+                padding: 5px 8px;
+                font-size: 0.65rem;
+                letter-spacing: 0.5px;
+            }
+
+            .editor-panel {
+                width: 100%;
+            }
+
+            .info-panel {
+                gap: 10px;
+                padding: 6px 10px;
+            }
+
+            .info-label {
+                display: none;
+            }
+        }
+
+        /* ========== SCROLLBAR STYLING ========== */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 20, 40, 0.5);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #0ff;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #0aa;
+        }
+    </style>
 </head>
 <body>
     <canvas id="shader-canvas"></canvas>
@@ -36,10 +452,10 @@
             </div>
         </header>
 
-        <aside class="sidebar" id="sidebar"></aside>
+        <aside class="sidebar collapsed" id="sidebar"></aside>
 
         <main class="main-content">
-            <div class="editor-panel" id="editorPanel">
+            <div class="editor-panel collapsed" id="editorPanel">
                 <div class="panel-header">
                     <span>FRAGMENT SHADER CODE</span>
                     <span id="statusText">LOADING...</span>
@@ -222,8 +638,6 @@
         return output;
     }
 
-    // [باقی کد یکسان است - فقط بخش uniforms را تغییر می‌دهیم]
-
     // ============================================
     // FALLBACK PRESETS
     // ============================================
@@ -295,6 +709,10 @@
             this.initRenderer();
             this.initEditor();
             
+            // ادیتور را در ابتدا بسته نگه می‌داریم
+            document.getElementById('editorPanel').classList.add('collapsed');
+            document.getElementById('sidebar').classList.add('collapsed');
+            
             this.loadPresets().then(() => {
                 this.initEventListeners();
                 this.loadFromStorage();
@@ -361,7 +779,7 @@
                 alpha: false
             });
             this.renderer.setSize(window.innerWidth, window.innerHeight);
-            this.renderer.setPixelRatio(window.devicePixelRatio);
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // محدود کردن pixel ratio
             
             this.scene = new THREE.Scene();
             this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -388,9 +806,6 @@
                 if (isShaderToy) {
                     glslCode = convertShadertoyToGLSL(fragmentShader);
                     console.log('✓ Converted ShaderToy → GLSL');
-                    console.log('===== CONVERTED CODE =====');
-                    console.log(glslCode);
-                    console.log('==========================');
                 }
                 
                 const geometry = new THREE.PlaneGeometry(2, 2);
@@ -429,7 +844,8 @@
                 indentUnit: 4,
                 tabSize: 4,
                 matchBrackets: true,
-                autoCloseBrackets: true
+                autoCloseBrackets: true,
+                lineWrapping: true // اضافه شده برای responsive بودن
             });
             this.editor.setSize('100%', '100%');
             this.editor.on('change', () => {
@@ -466,12 +882,31 @@
         }
 
         initEventListeners() {
+            // Toggle sidebar
             document.getElementById('sidebarToggle').onclick = () => {
-                document.getElementById('sidebar').classList.toggle('collapsed');
+                const sidebar = document.getElementById('sidebar');
+                sidebar.classList.toggle('collapsed');
+                
+                // در موبایل، ادیتور را ببند وقتی سایدبار باز می‌شود
+                if (window.innerWidth <= 768 && !sidebar.classList.contains('collapsed')) {
+                    document.getElementById('editorPanel').classList.add('collapsed');
+                }
             };
 
+            // Toggle editor
             document.getElementById('editorToggle').onclick = () => {
-                document.getElementById('editorPanel').classList.toggle('collapsed');
+                const editor = document.getElementById('editorPanel');
+                editor.classList.toggle('collapsed');
+                
+                // Refresh CodeMirror when showing
+                if (!editor.classList.contains('collapsed')) {
+                    setTimeout(() => this.editor.refresh(), 300);
+                    
+                    // در موبایل، سایدبار را ببند وقتی ادیتور باز می‌شود
+                    if (window.innerWidth <= 768) {
+                        document.getElementById('sidebar').classList.add('collapsed');
+                    }
+                }
             };
 
             document.getElementById('compileBtn').onclick = () => {
@@ -519,11 +954,34 @@
             document.getElementById('shareBtn').onclick = () => {
                 const compressed = LZString.compressToEncodedURIComponent(this.editor.getValue());
                 const url = `${location.origin}${location.pathname}?s=${compressed}`;
-                navigator.clipboard.writeText(url).then(() => {
+                
+                // استفاده از Clipboard API با fallback
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url).then(() => {
+                        this.setStatus('LINK COPIED!');
+                    }).catch(() => {
+                        this.fallbackCopy(url);
+                    });
+                } else {
+                    this.fallbackCopy(url);
+                }
+            };
+
+            // Fallback copy method
+            this.fallbackCopy = (text) => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
                     this.setStatus('LINK COPIED!');
-                }).catch(() => {
+                } catch (err) {
                     this.setStatus('COPY FAILED');
-                });
+                }
+                document.body.removeChild(textarea);
             };
 
             document.getElementById('sidebar').addEventListener('click', (e) => {
@@ -537,22 +995,50 @@
                     this.updateShader(code);
                     localStorage.setItem('shaderCode', code);
                     this.setStatus(`LOADED: ${this.presets[presetKey].name}`);
+                    
+                    // در موبایل، سایدبار را ببند بعد از انتخاب
+                    if (window.innerWidth <= 768) {
+                        setTimeout(() => {
+                            document.getElementById('sidebar').classList.add('collapsed');
+                        }, 300);
+                    }
                 }
             });
 
-            this.canvas.addEventListener('mousemove', (e) => {
+            // Mouse/Touch events
+            const handlePointerMove = (e) => {
                 const rect = this.canvas.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = window.innerHeight - (e.clientY - rect.top);
-                this.uniforms.mouse.value.set(x, y, e.buttons ? 1 : 0, e.buttons);
+                const x = (e.clientX || e.touches?.[0]?.clientX || 0) - rect.left;
+                const y = window.innerHeight - ((e.clientY || e.touches?.[0]?.clientY || 0) - rect.top);
+                this.uniforms.mouse.value.set(x, y, e.buttons || (e.touches?.length > 0 ? 1 : 0), e.buttons || 0);
+            };
+
+            this.canvas.addEventListener('mousemove', handlePointerMove);
+            this.canvas.addEventListener('touchmove', handlePointerMove, { passive: true });
+
+            // Resize handler with debounce
+            let resizeTimeout;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                    this.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+                    document.getElementById('resolution').textContent = 
+                        `${window.innerWidth}x${window.innerHeight}`;
+                    
+                    // Refresh editor on resize
+                    if (!document.getElementById('editorPanel').classList.contains('collapsed')) {
+                        this.editor.refresh();
+                    }
+                }, 250);
             });
 
-            window.addEventListener('resize', () => {
-                this.renderer.setSize(window.innerWidth, window.innerHeight);
-                this.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-                document.getElementById('resolution').textContent = 
-                    `${window.innerWidth}x${window.innerHeight}`;
-            });
+            // Prevent zoom on double tap (iOS)
+            document.addEventListener('touchstart', (e) => {
+                if (e.touches.length > 1) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
         }
 
         setupFPSCounter() {

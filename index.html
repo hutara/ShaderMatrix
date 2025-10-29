@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHADER MATRIX // Advanced Editor</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-ocean.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./assets/main.css">
+</head>
+<body>
+    <canvas id="shader-canvas"></canvas>
+    
+    <div class="fullscreen-exit-hint">Press ESC to exit fullscreen</div>
+
+    <button class="toggle-btn" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <button class="toggle-btn" id="editorToggle">
+        <span class="toggle-icon">⟨⟩</span>
+    </button>
+
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">◢ SHADER MATRIX ◣</div>
+            <div class="header-controls">
+                <button class="btn btn-secondary" id="compileBtn">COMPILE</button>
+                <button class="btn" id="runBtn">RUN</button>
+                <button class="btn" id="resetBtn">RESET</button>
+                <button class="btn" id="pauseBtn">PAUSE</button>
+                <button class="btn" id="fullscreenBtn">FULLSCREEN</button>
+                <button class="btn" id="shareBtn">SHARE</button>
+            </div>
+        </header>
+
+        <aside class="sidebar" id="sidebar"></aside>
+
+        <main class="main-content">
+            <div class="editor-panel" id="editorPanel">
+                <div class="panel-header">
+                    <span>FRAGMENT SHADER CODE</span>
+                    <span id="statusText">LOADING...</span>
+                </div>
+                <div class="editor-container">
+                    <textarea id="codeEditor"></textarea>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="info-panel">
+        <div class="info-item">
+            <div class="status-dot"></div>
+            <span class="info-label">FPS</span>
+            <span class="info-value" id="fps">60</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">TIME</span>
+            <span class="info-value" id="time">0.00s</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">RES</span>
+            <span class="info-value" id="resolution">1920x1080</span>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/clike/clike.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.4.4/libs/lz-string.min.js"></script>
+
+    <script>
+    // ============================================
+    // UNIVERSAL SHADERTOY CONVERTER v4.0 FINAL
+    // ============================================
+    function convertShadertoyToGLSL(sourceCode) {
+        // Already converted
+        if (sourceCode.includes('void main()') && 
+            sourceCode.includes('gl_FragColor') && 
+            !sourceCode.includes('mainImage')) {
+            return sourceCode;
+        }
+
+        let code = sourceCode;
+        
+        // === STEP 1: Replace ALL ShaderToy built-ins EVERYWHERE (including #defines) ===
+        // Do this FIRST before extracting anything
+        code = code.replace(/\biResolution\b/g, 'resolution');
+        code = code.replace(/\biTime\b/g, 'time');
+        code = code.replace(/\biTimeDelta\b/g, 'timeDelta');
+        code = code.replace(/\biFrame\b/g, 'frame');
+        code = code.replace(/\biMouse\b/g, 'mouse');
+        code = code.replace(/\biDate\b/g, 'date');
+        code = code.replace(/\biSampleRate\b/g, 'sampleRate');
+        
+        // Fix resolution.z -> resolution.x (vec3 to vec2 compatibility)
+        code = code.replace(/\bresolution\.z\b/g, 'resolution.x');
+        
+        // === STEP 2: Extract preprocessor directives ===
+        const directives = {
+            defines: [],
+            extensions: [],
+            pragmas: []
+        };
+        
+        code = code.replace(/^\s*#\s*define\s+[^\n]+/gm, (m) => {
+            directives.defines.push(m);
+            return '';
+        });
+        
+        code = code.replace(/^\s*#\s*extension\s+[^\n]+/gm, (m) => {
+            directives.extensions.push(m);
+            return '';
+        });
+        
+        code = code.replace(/^\s*#\s*pragma\s+[^\n]+/gm, (m) => {
+            directives.pragmas.push(m);
+            return '';
+        });
+        
+        // === STEP 3: Process mainImage function ===
+        const mainImageRegex = /void\s+mainImage\s*\(\s*out\s+vec4\s+(\w+)\s*,\s*in\s+vec2\s+(\w+)\s*\)\s*\{([\s\S]*)\}/;
+        const match = code.match(mainImageRegex);
+        
+        let mainBody = '';
+        let fragColorParam = 'fragColor';
+        let fragCoordParam = 'fragCoord';
+        
+        if (match) {
+            fragColorParam = match[1];
+            fragCoordParam = match[2];
+            mainBody = match[3];
+            
+            // Remove mainImage function from code
+            code = code.replace(mainImageRegex, '');
+        } else {
+            // No mainImage found, use entire code as body
+            mainBody = code;
+            code = '';
+        }
+        
+        // === STEP 4: Replace parameter names in main body ===
+        const fragColorRegex = new RegExp(`\\b${fragColorParam}\\b`, 'g');
+        const fragCoordRegex = new RegExp(`\\b${fragCoordParam}\\b`, 'g');
+        
+        mainBody = mainBody.replace(fragColorRegex, 'gl_FragColor');
+        mainBody = mainBody.replace(fragCoordRegex, 'gl_FragCoord.xy');
+        
+        // === STEP 5: Fix GLSL ES compatibility ===
+        // int() -> int(floor())
+        mainBody = mainBody.replace(/\bint\s*\(\s*([^)]+)\s*\)/g, 'int(floor($1))');
+        code = code.replace(/\bint\s*\(\s*([^)]+)\s*\)/g, 'int(floor($1))');
+        
+        // texture() -> texture2D()
+        mainBody = mainBody.replace(/\btexture\s*\(/g, 'texture2D(');
+        code = code.replace(/\btexture\s*\(/g, 'texture2D(');
+        
+        // === STEP 6: Build final shader ===
+        let output = '';
+        
+        // Precision
+        output += `#ifdef GL_ES
+    precision highp float;
+    #endif
+
+    `;
+        
+        // Extensions
+        if (mainBody.includes('dFdx') || mainBody.includes('dFdy') || mainBody.includes('fwidth') ||
+            code.includes('dFdx') || code.includes('dFdy') || code.includes('fwidth')) {
+            output += `#extension GL_OES_standard_derivatives : enable\n`;
+        }
+        
+        if (directives.extensions.length > 0) {
+            output += directives.extensions.join('\n') + '\n';
+        }
+        
+        output += '\n';
+        
+        // Pragmas
+        if (directives.pragmas.length > 0) {
+            output += directives.pragmas.join('\n') + '\n\n';
+        }
+        
+        // Defines
+        if (directives.defines.length > 0) {
+            output += directives.defines.join('\n') + '\n\n';
+        }
+        
+        // Uniforms (use vec2 for compatibility with .x and .y access)
+        const hasUniforms = code.includes('uniform ') || mainBody.includes('uniform ');
+        if (!hasUniforms) {
+            output += `uniform vec2 resolution;
+    uniform float time;
+    uniform float timeDelta;
+    uniform int frame;
+    uniform vec4 mouse;
+    uniform vec4 date;
+    uniform float sampleRate;
+    uniform sampler2D iChannel0;
+    uniform sampler2D iChannel1;
+    uniform sampler2D iChannel2;
+    uniform sampler2D iChannel3;
+
+    `;
+        }
+        
+        // Helper functions
+        if (code.trim().length > 0) {
+            output += code.trim() + '\n\n';
+        }
+        
+        // Main function
+        output += `void main() {\n${mainBody}\n}\n`;
+        
+        // Clean up
+        output = output.replace(/\n{3,}/g, '\n\n');
+        
+        return output;
+    }
+
+    // [باقی کد یکسان است - فقط بخش uniforms را تغییر می‌دهیم]
+
+    // ============================================
+    // FALLBACK PRESETS
+    // ============================================
+    const FALLBACK_PRESETS = {
+        plasma: {
+            name: "Plasma Field",
+            code: `uniform vec2 resolution;
+    uniform float time;
+
+    void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec2 p = (uv - 0.5) * 2.0;
+        p.x *= resolution.x / resolution.y;
+        
+        float v = 0.0;
+        v += sin(p.x * 10.0 + time);
+        v += sin(p.y * 10.0 + time * 1.2);
+        v += sin((p.x + p.y) * 10.0 + time * 0.8);
+        v += sin(length(p) * 15.0 - time * 2.0);
+        v *= 0.25;
+        
+        vec3 col = vec3(
+            sin(v * 3.14159 + time * 0.5),
+            sin(v * 3.14159 + 2.094 + time * 0.3),
+            sin(v * 3.14159 + 4.189 + time * 0.7)
+        );
+        col = col * 0.5 + 0.5;
+        col = pow(col, vec3(1.5));
+        
+        gl_FragColor = vec4(col, 1.0);
+    }`
+        },
+        matrix: {
+            name: "Matrix Rain",
+            code: `uniform vec2 resolution;
+    uniform float time;
+
+    float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        float cols = 60.0;
+        float colId = floor(uv.x * cols);
+        float speed = hash(vec2(colId, 0.0)) * 2.0 + 0.5;
+        float offset = hash(vec2(colId, 1.0)) * 100.0;
+        float y = fract(uv.y + time * speed * 0.15 + offset);
+        float char = hash(vec2(colId, floor(y * 40.0)));
+        float intensity = char * (1.0 - y);
+        float head = smoothstep(0.98, 1.0, y);
+        vec3 col = vec3(0.0, intensity, 0.0);
+        col += vec3(0.5, 1.0, 0.5) * head;
+        col *= smoothstep(0.0, 0.05, y);
+        gl_FragColor = vec4(col, 1.0);
+    }`
+        }
+    };
+
+    class ShaderEngine {
+        constructor() {
+            this.canvas = document.getElementById('shader-canvas');
+            this.paused = false;
+            this.presets = null;
+            this.currentShader = '';
+            this.startTime = performance.now();
+            this.frameCount = 0;
+            
+            this.initRenderer();
+            this.initEditor();
+            
+            this.loadPresets().then(() => {
+                this.initEventListeners();
+                this.loadFromStorage();
+                this.loadFromURL();
+                this.setupFPSCounter();
+                this.animate();
+            });
+        }
+
+        async loadPresets() {
+            try {
+                const response = await fetch('./assets/presets.json');
+                if (!response.ok) throw new Error('Failed to load presets.json');
+                const data = await response.json();
+                this.presets = data.presets || data;
+                this.setStatus(`LOADED ${Object.keys(this.presets).length} PRESETS`);
+                console.log('✓ Loaded presets from JSON');
+            } catch (error) {
+                console.warn('⚠ Failed to load presets.json, using fallback');
+                this.presets = FALLBACK_PRESETS;
+                this.setStatus('USING FALLBACK PRESETS');
+            }
+            
+            this.currentShader = this.presets.matrix?.code || this.presets[Object.keys(this.presets)[0]]?.code || '';
+            this.editor.setValue(this.currentShader);
+            this.updateShader(this.currentShader);
+            this.populateSidebar();
+        }
+
+        populateSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.innerHTML = '';
+            const categories = { 'SHADER PRESETS': [], 'VISUAL EFFECTS': [] };
+            
+            Object.entries(this.presets).forEach(([key, preset]) => {
+                const category = preset.category || 'SHADER PRESETS';
+                if (!categories[category]) categories[category] = [];
+                categories[category].push({ key, ...preset });
+            });
+            
+            Object.entries(categories).forEach(([categoryName, items]) => {
+                if (items.length === 0) return;
+                const section = document.createElement('div');
+                section.className = 'sidebar-section';
+                const title = document.createElement('div');
+                title.className = 'sidebar-title';
+                title.textContent = categoryName;
+                section.appendChild(title);
+                items.forEach(item => {
+                    const btn = document.createElement('div');
+                    btn.className = 'preset-item';
+                    btn.dataset.preset = item.key;
+                    btn.textContent = item.name || item.key;
+                    section.appendChild(btn);
+                });
+                sidebar.appendChild(section);
+            });
+        }
+
+        initRenderer() {
+            this.renderer = new THREE.WebGLRenderer({ 
+                canvas: this.canvas,
+                antialias: true,
+                alpha: false
+            });
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.renderer.setPixelRatio(window.devicePixelRatio);
+            
+            this.scene = new THREE.Scene();
+            this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            
+            // Use vec2 for resolution (not vec3)
+            this.uniforms = {
+                time: { value: 0 },
+                timeDelta: { value: 0 },
+                frame: { value: 0 },
+                resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                mouse: { value: new THREE.Vector4(0, 0, 0, 0) },
+                date: { value: new THREE.Vector4(0, 0, 0, 0) },
+                sampleRate: { value: 44100 }
+            };
+        }
+
+        updateShader(fragmentShader) {
+            try {
+                let glslCode = fragmentShader;
+                const isShaderToy = fragmentShader.includes('mainImage') || 
+                                fragmentShader.includes('iResolution') || 
+                                fragmentShader.includes('iTime');
+                
+                if (isShaderToy) {
+                    glslCode = convertShadertoyToGLSL(fragmentShader);
+                    console.log('✓ Converted ShaderToy → GLSL');
+                    console.log('===== CONVERTED CODE =====');
+                    console.log(glslCode);
+                    console.log('==========================');
+                }
+                
+                const geometry = new THREE.PlaneGeometry(2, 2);
+                const material = new THREE.ShaderMaterial({
+                    uniforms: this.uniforms,
+                    vertexShader: `void main() { gl_Position = vec4(position, 1.0); }`,
+                    fragmentShader: glslCode,
+                    extensions: { derivatives: true }
+                });
+
+                if (this.mesh) {
+                    this.scene.remove(this.mesh);
+                    this.mesh.geometry.dispose();
+                    this.mesh.material.dispose();
+                }
+                
+                this.mesh = new THREE.Mesh(geometry, material);
+                this.scene.add(this.mesh);
+                
+                this.setStatus('COMPILED ✓');
+                console.log('✓ Shader compiled successfully');
+                return true;
+            } catch (error) {
+                this.setStatus('SHADER ERROR');
+                console.error('✗ Shader compilation error:', error);
+                alert(`Shader Error:\n${error.message}\n\nCheck console for details.`);
+                return false;
+            }
+        }
+
+        initEditor() {
+            this.editor = CodeMirror.fromTextArea(document.getElementById('codeEditor'), {
+                mode: 'text/x-csrc',
+                theme: 'material-ocean',
+                lineNumbers: true,
+                indentUnit: 4,
+                tabSize: 4,
+                matchBrackets: true,
+                autoCloseBrackets: true
+            });
+            this.editor.setSize('100%', '100%');
+            this.editor.on('change', () => {
+                localStorage.setItem('shaderCode', this.editor.getValue());
+            });
+        }
+
+        loadFromStorage() {
+            const saved = localStorage.getItem('shaderCode');
+            if (saved && saved !== this.currentShader) {
+                this.editor.setValue(saved);
+                this.currentShader = saved;
+                this.updateShader(saved);
+                this.setStatus('LOADED FROM STORAGE');
+            }
+        }
+
+        loadFromURL() {
+            const urlParams = new URLSearchParams(location.search);
+            const shared = urlParams.get('s');
+            if (shared) {
+                try {
+                    const code = LZString.decompressFromEncodedURIComponent(shared);
+                    if (code) {
+                        this.editor.setValue(code);
+                        this.currentShader = code;
+                        this.updateShader(code);
+                        this.setStatus('LOADED FROM URL');
+                    }
+                } catch (e) {
+                    console.error('Failed to load from URL:', e);
+                }
+            }
+        }
+
+        initEventListeners() {
+            document.getElementById('sidebarToggle').onclick = () => {
+                document.getElementById('sidebar').classList.toggle('collapsed');
+            };
+
+            document.getElementById('editorToggle').onclick = () => {
+                document.getElementById('editorPanel').classList.toggle('collapsed');
+            };
+
+            document.getElementById('compileBtn').onclick = () => {
+                this.updateShader(this.editor.getValue());
+            };
+
+            document.getElementById('runBtn').onclick = () => {
+                const code = this.editor.getValue();
+                if (this.updateShader(code)) {
+                    this.currentShader = code;
+                    localStorage.setItem('shaderCode', code);
+                }
+            };
+
+            document.getElementById('resetBtn').onclick = () => {
+                const defaultShader = this.presets.matrix?.code || this.currentShader;
+                this.editor.setValue(defaultShader);
+                this.currentShader = defaultShader;
+                this.updateShader(this.currentShader);
+                localStorage.setItem('shaderCode', this.currentShader);
+            };
+
+            document.getElementById('pauseBtn').onclick = () => {
+                this.paused = !this.paused;
+                document.getElementById('pauseBtn').textContent = this.paused ? 'RESUME' : 'PAUSE';
+                this.setStatus(this.paused ? 'PAUSED' : 'RUNNING');
+            };
+
+            document.getElementById('fullscreenBtn').onclick = () => {
+                if (document.fullscreenElement) {
+                    document.exitFullscreen();
+                    document.body.classList.remove('fullscreen-mode');
+                } else {
+                    document.documentElement.requestFullscreen();
+                    document.body.classList.add('fullscreen-mode');
+                }
+            };
+
+            document.addEventListener('fullscreenchange', () => {
+                if (!document.fullscreenElement) {
+                    document.body.classList.remove('fullscreen-mode');
+                }
+            });
+
+            document.getElementById('shareBtn').onclick = () => {
+                const compressed = LZString.compressToEncodedURIComponent(this.editor.getValue());
+                const url = `${location.origin}${location.pathname}?s=${compressed}`;
+                navigator.clipboard.writeText(url).then(() => {
+                    this.setStatus('LINK COPIED!');
+                }).catch(() => {
+                    this.setStatus('COPY FAILED');
+                });
+            };
+
+            document.getElementById('sidebar').addEventListener('click', (e) => {
+                const btn = e.target.closest('.preset-item');
+                if (!btn) return;
+                const presetKey = btn.dataset.preset;
+                if (this.presets && this.presets[presetKey]) {
+                    const code = this.presets[presetKey].code;
+                    this.editor.setValue(code);
+                    this.currentShader = code;
+                    this.updateShader(code);
+                    localStorage.setItem('shaderCode', code);
+                    this.setStatus(`LOADED: ${this.presets[presetKey].name}`);
+                }
+            });
+
+            this.canvas.addEventListener('mousemove', (e) => {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = window.innerHeight - (e.clientY - rect.top);
+                this.uniforms.mouse.value.set(x, y, e.buttons ? 1 : 0, e.buttons);
+            });
+
+            window.addEventListener('resize', () => {
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+                document.getElementById('resolution').textContent = 
+                    `${window.innerWidth}x${window.innerHeight}`;
+            });
+        }
+
+        setupFPSCounter() {
+            let lastTime = performance.now();
+            let frames = 0;
+            setInterval(() => {
+                const now = performance.now();
+                const fps = Math.round(frames * 1000 / (now - lastTime));
+                document.getElementById('fps').textContent = fps;
+                frames = 0;
+                lastTime = now;
+            }, 1000);
+            const countFrame = () => {
+                frames++;
+                requestAnimationFrame(countFrame);
+            };
+            countFrame();
+        }
+
+        setStatus(text) {
+            const el = document.getElementById('statusText');
+            el.textContent = text;
+            clearTimeout(this._statusTimeout);
+            this._statusTimeout = setTimeout(() => {
+                if (el.textContent === text) el.textContent = 'READY';
+            }, 2500);
+        }
+
+        animate() {
+            requestAnimationFrame(() => this.animate());
+            if (!this.paused) {
+                const currentTime = performance.now();
+                this.uniforms.time.value = (currentTime - this.startTime) * 0.001;
+                this.uniforms.timeDelta.value = 0.016;
+                this.uniforms.frame.value = this.frameCount++;
+                const d = new Date();
+                this.uniforms.date.value.set(
+                    d.getFullYear(), d.getMonth(), d.getDate(),
+                    d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
+                );
+            }
+            document.getElementById('time').textContent = this.uniforms.time.value.toFixed(2) + 's';
+            this.renderer.render(this.scene, this.camera);
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        new ShaderEngine();
+        document.getElementById('resolution').textContent = `${window.innerWidth}x${window.innerHeight}`;
+    });
+    </script>
+</body>
+</html>
